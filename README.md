@@ -70,8 +70,10 @@ This project is designed to experiment with combining traditional CPU-based comm
 
 ## 5️⃣ Install NCCL + MPI (CUDA-Aware Communication)
 
-1. sudo apt install -y libnccl2 libnccl-dev libopenmpi-dev openmpi-bin
-2. mpirun --version
+1. Run:
+   ```bash 
+   sudo apt install -y libnccl2 libnccl-dev libopenmpi-dev openmpi-bin
+   mpirun --version
 
 ## 6️⃣ Create Python Environment and Install PyTorch
 
