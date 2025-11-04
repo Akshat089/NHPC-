@@ -84,7 +84,9 @@ This project is designed to experiment with combining traditional CPU-based comm
    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
 ## Verify CUDA access:
-1. python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+1.  Run:
+    ```bash
+    python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 
 ## 7️⃣ Verify Full GPU and Communication Stack
 1. nvidia-smi
