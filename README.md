@@ -63,8 +63,10 @@ This project is designed to experiment with combining traditional CPU-based comm
 
 ## 4️⃣ Install CUDA Toolkit 12.6
 
-1. sudo apt install -y cuda-toolkit-12-6
-2.   nvcc --version
+1. Run:
+   ```bash
+   sudo apt install -y cuda-toolkit-12-6
+   nvcc --version
 
 ## 5️⃣ Install NCCL + MPI (CUDA-Aware Communication)
 
