@@ -77,9 +77,11 @@ This project is designed to experiment with combining traditional CPU-based comm
 
 ## 6️⃣ Create Python Environment and Install PyTorch
 
-1. python3 -m venv ~/pytorch-env
-2. source ~/pytorch-env/bin/activate
-3. pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+1. Run:
+   ```bash
+   python3 -m venv ~/pytorch-env
+   source ~/pytorch-env/bin/activate
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
 ## Verify CUDA access:
 1. python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
