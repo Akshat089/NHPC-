@@ -13,6 +13,10 @@ public:
 
     virtual ~Request() {}
 };
+class SimpleRequest : public Request {
+    void test() override { std::cout << "doneeee\n"; }
+    void wait() override { std::cout << "waiting...\n"; }
+};
 
 class Backend{
 public:
@@ -36,10 +40,11 @@ public:
 class Comm {
 private:
     unique_ptr<Backend> backend;
-
+    unique_ptr<Request> req;
 public:
     Comm() {
         backend = make_unique<HelloBackend>();  
+        req = make_unique<SimpleRequest>();
     }
 
     void init() {
@@ -48,6 +53,7 @@ public:
 
     void say_hello() {
         backend->say_hello();
+        req->test();
     }
 
     void finalize() {
