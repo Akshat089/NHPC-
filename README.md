@@ -89,10 +89,13 @@ This project is designed to experiment with combining traditional CPU-based comm
     python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 
 ## 7️⃣ Verify Full GPU and Communication Stack
-1. nvidia-smi
-2. nvcc --version
-3. mpirun --version
-4. python -c "import torch; print(torch.cuda.is_available())"
+
+1.  Run:
+    ```bash
+    nvidia-smi
+    nvcc --version
+    mpirun --version
+    python -c "import torch; print(torch.cuda.is_available())"
 
 
 
