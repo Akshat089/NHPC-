@@ -1,4 +1,4 @@
-# NHPC-
+# NHPC
 
 ## 🧠 Project Overview
 **NHPC- (Next-Generation Hybrid Parallel Communication)** is a high-performance computing runtime that integrates **MPI** and **NCCL** to enable efficient, hybrid communication for distributed deep-learning workloads.  
@@ -67,6 +67,15 @@ This project is designed to experiment with combining traditional CPU-based comm
    ```bash
    sudo apt install -y cuda-toolkit-12-6
    nvcc --version
+
+2. If you get the error **E:Unable to locate package cuda-toolkit-12-6**, run:
+   ```bash
+   # Example for Ubuntu 22.04
+   wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+   sudo dpkg -i cuda-keyring_1.1-1_all.deb
+   sudo apt-get update
+   ```
+
 
 ## 5️⃣ Install NCCL + MPI (CUDA-Aware Communication)
 
