@@ -5,6 +5,25 @@
 #include <torch/extension.h>
 #include <mpi.h>
 
+#include <nccl.h>
+#include <cuda_runtime.h>
+
+#define NCCL_CHECK(cmd) do {                                     \
+    ncclResult_t r = cmd;                                        \
+    if (r != ncclSuccess) {                                      \
+        cerr << "[NCCL ERROR] " << ncclGetErrorString(r) << "\n"; \
+        throw runtime_error("NCCL failure");                     \
+    }                                                            \
+} while(0)
+
+#define CUDA_CHECK(cmd) do {                                   \
+    cudaError_t e = cmd;                                       \
+    if (e != cudaSuccess) {                                    \
+        cerr << "[CUDA ERROR] " << cudaGetErrorString(e) << "\n"; \
+        throw runtime_error("CUDA failure");                    \
+    }                                                          \
+} while(0)
+
 namespace py = pybind11;
 using namespace std;
 
@@ -288,18 +307,172 @@ public:
 bool MPIBackend::initialized = false;
 
 class NCCLBackend : public Backend {
+    int rank = 0;
+    int world = 1;
+
+    ncclComm_t comm;
+    cudaStream_t stream;
+
 public:
-    void init() override { cout << "[NCCLBackend] init\n"; }
-    void finalize() override { cout << "[NCCLBackend] finalize\n"; }
+    int get_rank() const override { return rank; }
+    int get_world_size() const override { return world; }
 
-    void all_reduce(const Buffer& buf) override { cout << "[NCCLBackend] Performing all_reduce\n"; buf.describe(); }
-    void all_to_all(const Buffer& buf) override { cout << "[NCCLBackend] Performing all_to_all\n"; buf.describe(); }
-    void gather(const Buffer& buf) override { cout << "[NCCLBackend] Performing gather\n"; buf.describe(); }
-    void scatter(const Buffer& buf) override { cout << "[NCCLBackend] Performing scatter\n"; buf.describe(); }
-    void broadcast(const Buffer& buf) override { cout << "[NCCLBackend] Performing broadcast\n"; buf.describe(); }
+    void init() override {
+        cout << "[NCCLBackend] init\n";
 
-    int get_rank() const override { return 0; }
-    int get_world_size() const override { return 1; }
+        // -------------------------------------------
+        // 1. Get rank & world using MPI for bootstrap
+        // -------------------------------------------
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &world);
+
+        // -------------------------------------------
+        // 2. Generate a unique NCCL ID on rank 0
+        // -------------------------------------------
+        ncclUniqueId id;
+        if (rank == 0) {
+            NCCL_CHECK(ncclGetUniqueId(&id));
+        }
+
+        // -------------------------------------------
+        // 3. Broadcast that ID to all ranks using MPI
+        // -------------------------------------------
+        MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+        // -------------------------------------------
+        // 4. Create NCCL communicator
+        // -------------------------------------------
+        NCCL_CHECK(ncclCommInitRank(&comm, world, id, rank));
+
+        // -------------------------------------------
+        // 5. Create CUDA stream
+        // -------------------------------------------
+        CUDA_CHECK(cudaSetDevice(rank));  
+        CUDA_CHECK(cudaStreamCreate(&stream));
+
+        cout << "[NCCLBackend] init complete (rank=" << rank
+             << ", world=" << world << ")\n";
+    }
+
+    void finalize() override {
+        NCCL_CHECK(ncclCommDestroy(comm));
+        CUDA_CHECK(cudaStreamDestroy(stream));
+        cout << "[NCCLBackend] finalize\n";
+    }
+
+
+    // =====================================================================
+    // NCCL ALL-REDUCE
+    // =====================================================================
+    void all_reduce(const Buffer& buf) override {
+        cout << "[NCCLBackend] AllReduce\n";
+        buf.describe();
+
+        if (!buf.is_cuda_buffer()) {
+            throw runtime_error("NCCL requires CUDA tensor");
+        }
+
+        if (buf.get_dtype() != "float32") {
+            throw runtime_error("NCCL demo only supports float32");
+        }
+
+        int count = buf.get_num_bytes() / sizeof(float);
+
+        NCCL_CHECK(
+            ncclAllReduce(
+                buf.get_data(),
+                buf.get_data(),
+                count,
+                ncclFloat32,
+                ncclSum,
+                comm,
+                stream
+            )
+        );
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+    }
+
+    // =====================================================================
+    // NCCL BROADCAST
+    // =====================================================================
+    void broadcast(const Buffer& buf) override {
+        cout << "[NCCLBackend] Broadcast\n";
+        buf.describe();
+
+        if (!buf.is_cuda_buffer()) {
+            throw runtime_error("NCCL requires CUDA memory");
+        }
+
+        int count = buf.get_num_bytes() / sizeof(float);
+
+        NCCL_CHECK(
+            ncclBroadcast(
+                buf.get_data(),
+                buf.get_data(),
+                count,
+                ncclFloat32,
+                0,               // root
+                comm,
+                stream
+            )
+        );
+
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+    }
+
+    // =====================================================================
+    // NCCL DOES NOT SUPPORT ALL-TO-ALL NATIVELY
+    // You must implement with send/recv + CUDA streams.
+    // =====================================================================
+    void all_to_all(const Buffer& buf) override {
+        buf.describe();
+        throw runtime_error("NCCL does not provide native all_to_all — requires custom kernel");
+    }
+
+    // =====================================================================
+    // NCCL ALL-GATHER (supported)
+    // =====================================================================
+    void gather(const Buffer& buf) override {
+        cout << "[NCCLBackend] AllGather\n";
+        buf.describe();
+
+        if (!buf.is_cuda_buffer()) {
+            throw runtime_error("NCCL requires CUDA memory");
+        }
+
+        int local_count = buf.get_num_bytes() / sizeof(float);
+        int total_count = local_count * world;
+
+        vector<float> recv(total_count);
+        float* recv_d = nullptr;
+
+        CUDA_CHECK(cudaMalloc(&recv_d, total_count * sizeof(float)));
+
+        NCCL_CHECK(
+            ncclAllGather(
+                buf.get_data(),
+                recv_d,
+                local_count,
+                ncclFloat32,
+                comm,
+                stream
+            )
+        );
+
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaMemcpy(buf.get_data(), recv_d,
+                              total_count * sizeof(float),
+                              cudaMemcpyDeviceToDevice));
+
+        CUDA_CHECK(cudaFree(recv_d));
+    }
+
+    // =====================================================================
+    // NCCL SCATTER — NOT SUPPORTED
+    // =====================================================================
+    void scatter(const Buffer& buf) override {
+        throw runtime_error("NCCL scatter must be manually implemented using send/recv operations");
+    }
 };
 
 unique_ptr<Backend> create_backend(const string& name) {
