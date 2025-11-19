@@ -368,7 +368,7 @@ public:
         cout << "[NCCLBackend] AllReduce\n";
         buf.describe();
 
-        if (!buf.is_cuda_buffer()) {
+        if (!buf.get_is_cuda()) {
             throw runtime_error("NCCL requires CUDA tensor");
         }
 
@@ -399,7 +399,7 @@ public:
         cout << "[NCCLBackend] Broadcast\n";
         buf.describe();
 
-        if (!buf.is_cuda_buffer()) {
+        if (!buf.get_is_cuda()) {
             throw runtime_error("NCCL requires CUDA memory");
         }
 
@@ -436,7 +436,7 @@ public:
         cout << "[NCCLBackend] AllGather\n";
         buf.describe();
 
-        if (!buf.is_cuda_buffer()) {
+        if (!buf.get_is_cuda()) {
             throw runtime_error("NCCL requires CUDA memory");
         }
 
