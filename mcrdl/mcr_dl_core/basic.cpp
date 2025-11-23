@@ -1,8 +1,9 @@
+#include <torch/extension.h>
+using torch::Tensor;
 #include <bits/stdc++.h>
 #include <memory>
 #include <cstddef>
 #include <pybind11/pybind11.h>
-#include <torch/extension.h>
 #include <mpi.h>
 
 #include <nccl.h>
@@ -306,6 +307,7 @@ public:
 
 bool MPIBackend::initialized = false;
 
+
 class NCCLBackend : public Backend {
     int rank = 0;
     int world = 1;
@@ -314,51 +316,30 @@ class NCCLBackend : public Backend {
     cudaStream_t stream;
 
 public:
+    NCCLBackend() : comm(nullptr), stream(nullptr) {};
     int get_rank() const override { return rank; }
     int get_world_size() const override { return world; }
 
     void init() override {
-        cout << "[NCCLBackend] init\n";
+        cout << "[NCCLBackend] init (SINGLE GPU MODE)\n";
+        int dev = 0;
+        cudaSetDevice(dev);
+        int devs[1] = { dev };
 
-        // -------------------------------------------
-        // 1. Get rank & world using MPI for bootstrap
-        // -------------------------------------------
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        MPI_Comm_size(MPI_COMM_WORLD, &world);
+    // This must happen once and must store "comm"
+        NCCL_CHECK(ncclCommInitAll(&comm, 1, devs));
+        cout << "comm ptr = " << comm << endl;  // Debug line
 
-        // -------------------------------------------
-        // 2. Generate a unique NCCL ID on rank 0
-        // -------------------------------------------
-        ncclUniqueId id;
-        if (rank == 0) {
-            NCCL_CHECK(ncclGetUniqueId(&id));
-        }
+        cudaStreamCreate(&stream);}
 
-        // -------------------------------------------
-        // 3. Broadcast that ID to all ranks using MPI
-        // -------------------------------------------
-        MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
-
-        // -------------------------------------------
-        // 4. Create NCCL communicator
-        // -------------------------------------------
-        NCCL_CHECK(ncclCommInitRank(&comm, world, id, rank));
-
-        // -------------------------------------------
-        // 5. Create CUDA stream
-        // -------------------------------------------
-        CUDA_CHECK(cudaSetDevice(rank));  
-        CUDA_CHECK(cudaStreamCreate(&stream));
-
-        cout << "[NCCLBackend] init complete (rank=" << rank
-             << ", world=" << world << ")\n";
-    }
 
     void finalize() override {
-        NCCL_CHECK(ncclCommDestroy(comm));
-        CUDA_CHECK(cudaStreamDestroy(stream));
-        cout << "[NCCLBackend] finalize\n";
-    }
+        if (comm) ncclCommDestroy(comm);
+        if (stream) cudaStreamDestroy(stream);
+        comm = nullptr;
+         stream = nullptr;
+        }
+
 
 
     // =====================================================================
@@ -367,13 +348,17 @@ public:
     void all_reduce(const Buffer& buf) override {
         cout << "[NCCLBackend] AllReduce\n";
         buf.describe();
+        if (!comm) {
+                throw std::runtime_error("NCCL COMM IS NULL BEFORE ALLREDUCE");
+        }
+
 
         if (!buf.get_is_cuda()) {
             throw runtime_error("NCCL requires CUDA tensor");
         }
 
-        if (buf.get_dtype() != "float32") {
-            throw runtime_error("NCCL demo only supports float32");
+        if (buf.get_dtype() != "float32" && buf.get_dtype() != "float") {
+            throw runtime_error("NCCL demo only supports float32 and float");
         }
 
         int count = buf.get_num_bytes() / sizeof(float);
@@ -483,58 +468,79 @@ unique_ptr<Backend> create_backend(const string& name) {
 
 class Comm {
 private:
-    unique_ptr<Backend> backend;
+      unique_ptr<Backend> mpi_backend;
+      unique_ptr<Backend> nccl_backend;
+
 
 public:
-    Comm(const string& backend_name = "mpi") {
-        backend = create_backend(backend_name);
+    Comm() {
+        mpi_backend = create_backend("mpi");
+        nccl_backend = create_backend("nccl");
     }
 
-    void init() { backend->init(); }
-    void finalize() { backend->finalize(); }
-    int get_rank() const { return backend->get_rank(); }
-    int get_world_size() const { return backend->get_world_size(); }
+    void init() {
+        mpi_backend->init();
+        nccl_backend->init();
+    }
 
-    void all_reduce(const torch::Tensor& tensor) {
+    void finalize() {
+        mpi_backend->finalize();
+        nccl_backend->finalize();
+    }
+    int get_rank() const { return mpi_backend->get_rank(); }
+    int get_world_size() const { return mpi_backend->get_world_size(); }
+
+    void all_reduce(const at::Tensor &tensor) {
         Buffer buf = make_buffer_from_tensor(tensor);
         if (buf.get_is_cuda())
-            backend = create_backend("nccl");
+            nccl_backend->all_reduce(buf);
         else
-            backend = create_backend("mpi");
-        backend->all_reduce(buf);
+            mpi_backend->all_reduce(buf);
     }
 
-    void all_to_all(const torch::Tensor& tensor) {
+   void all_to_all(const at::Tensor& tensor) {
         Buffer buf = make_buffer_from_tensor(tensor);
-        backend->all_to_all(buf);
+        if (buf.get_is_cuda())
+            nccl_backend->all_to_all(buf);
+        else
+            mpi_backend->all_to_all(buf);
     }
 
-    void gather(const torch::Tensor& tensor) {
+    void gather(const at::Tensor& tensor) {
         Buffer buf = make_buffer_from_tensor(tensor);
-        backend->gather(buf);
+        if (buf.get_is_cuda())
+            nccl_backend->gather(buf);
+        else
+            mpi_backend->gather(buf);
     }
 
-    void scatter(const torch::Tensor& tensor) {
+    void scatter(const at::Tensor& tensor) {
         Buffer buf = make_buffer_from_tensor(tensor);
-        backend->scatter(buf);
+        if (buf.get_is_cuda())
+            nccl_backend->scatter(buf);
+        else
+            mpi_backend->scatter(buf);
     }
 
-    void broadcast(const torch::Tensor& tensor) {
+    void broadcast(const at::Tensor& tensor) {
         Buffer buf = make_buffer_from_tensor(tensor);
-        backend->broadcast(buf);
+        if (buf.get_is_cuda())
+            nccl_backend->broadcast(buf);
+        else
+            mpi_backend->broadcast(buf);
     }
 };
 
 PYBIND11_MODULE(mcrdl, m) {
     py::class_<Comm>(m, "Comm")
-        .def(py::init<const string&>(), py::arg("backend_name") = "mpi")
+        .def(py::init<>())  // no backend name now, Comm manages both internally
         .def("init", &Comm::init)
         .def("finalize", &Comm::finalize)
-        .def("all_reduce", &Comm::all_reduce)
-        .def("all_to_all", &Comm::all_to_all)
-        .def("gather", &Comm::gather)
+        .def("all_reduce", &Comm::all_reduce, py::arg("tensor"))
+        .def("all_to_all", &Comm::all_to_all, py::arg("tensor"))
+        .def("gather", &Comm::gather, py::arg("tensor"))
+        .def("scatter", &Comm::scatter, py::arg("tensor"))
+        .def("broadcast", &Comm::broadcast, py::arg("tensor"))
         .def("get_rank", &Comm::get_rank)
-        .def("scatter", &Comm::scatter)
-        .def("broadcast", &Comm::broadcast)
         .def("get_world_size", &Comm::get_world_size);
 }
