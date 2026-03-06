@@ -1,4 +1,4 @@
-# NHPC
+# NHPC: Mix-and-Match Communication Runtime for Deep Learning
 
 ## 🧠 Project Overview
 **NHPC- (Next-Generation Hybrid Parallel Communication)** is a high-performance computing runtime that integrates **MPI** and **NCCL** to enable efficient, hybrid communication for distributed deep-learning workloads.  
