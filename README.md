@@ -7,13 +7,13 @@ This project is designed to experiment with combining traditional CPU-based comm
 ---
 
 ## 📂 Project Structure
-
+```text
 NHPC/
 ├── benchmarks/
 ├── csvs/
 ├── mcrdl/
 └── README.md
-
+```
 ## ⚙️ System Requirements
 
 | Component       | Minimum Version             | Notes                       |
